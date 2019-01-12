@@ -10,6 +10,8 @@ import (
 	"image/png"
 	"log"
 	"os"
+
+	"github.com/kr/pretty"
 )
 
 type Direction int
@@ -32,6 +34,17 @@ type wfcTile struct {
 	weight int
 	chridx int
 	rules  []wfcRule
+}
+
+func (wt *wfcTile) CountRule(dir Direction, hash string) {
+	for i, _ := range wt.rules {
+		if wt.rules[i].direction == dir && wt.rules[i].tileHash == hash {
+			wt.rules[i].weight = wt.rules[i].weight + 1
+			return
+		}
+	}
+	// If not found on the loop, add new rule.
+	wt.rules = append(wt.rules, wfcRule{dir, hash, 1})
 }
 
 type tilemap struct {
@@ -153,8 +166,26 @@ func main() {
 			if !ok {
 				log.Printf("unknown tile %s", sum)
 			}
+			// Check out the rules.
+			if rsum, err := tilemap.At(x, y-1); err == nil {
+				tiles[sum].CountRule(Up, rsum)
+			}
+			if rsum, err := tilemap.At(x+1, y); err == nil {
+				tiles[sum].CountRule(Right, rsum)
+			}
+			if rsum, err := tilemap.At(x, y+1); err == nil {
+				tiles[sum].CountRule(Down, rsum)
+			}
+			if rsum, err := tilemap.At(x-1, y); err == nil {
+				tiles[sum].CountRule(Left, rsum)
+			}
+
 			fmt.Printf("%2d", tile.chridx)
 		}
 		fmt.Println()
+	}
+
+	for _, tile := range tiles {
+		pretty.Print(tile)
 	}
 }
