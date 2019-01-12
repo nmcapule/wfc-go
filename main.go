@@ -74,6 +74,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	chtable := make(map[string]int)
 	weights := make(map[string]int)
 
 	bounds := img.Bounds()
@@ -83,20 +84,13 @@ func main() {
 			simg := img.(SubImager).SubImage(rect)
 			sum := hashImage(simg)
 			weights[sum] = weights[sum] + 1
+			ch, ok := chtable[sum]
+			if !ok {
+				ch = len(chtable)
+				chtable[sum] = ch
+			}
+			fmt.Printf("%2d ", ch)
 		}
+		fmt.Println()
 	}
-
-	fmt.Println(weights)
-
-	// Check if first and second tile image can equal.
-	r1 := image.Rect(0, 0, *sizePtr, *sizePtr)
-	i1 := img.(SubImager).SubImage(r1)
-	r2 := image.Rect(*sizePtr, 0, *sizePtr*2, *sizePtr)
-	i2 := img.(SubImager).SubImage(r2)
-
-	fmt.Println(i1 == i2)
-	fmt.Println(equalImage(i1, i2))
-
-	fmt.Println(hashImage(i1))
-	fmt.Println(hashImage(i2))
 }
