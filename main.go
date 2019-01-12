@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"image"
@@ -11,33 +12,48 @@ import (
 	"os"
 )
 
-// Converts a perfectly fine and innocent image to a sad grayscale.
-func grayImage(img image.Image) *image.Gray {
-	bounds := img.Bounds()
-	out := image.NewGray(bounds)
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			out.Set(x, y, color.GrayModel.Convert(img.At(x, y)))
-		}
-	}
-	return out
+type SubImager interface {
+	SubImage(image.Rectangle) image.Image
 }
 
-// Computes the average gray color for a given gray image.
-func averageColor(img *image.Gray) color.Gray {
-	bounds := img.Bounds()
-	var sum uint32
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			gray := img.At(x, y).(color.Gray)
-			sum += uint32(gray.Y)
+func equalColor(a, b color.Color) bool {
+	ar, ag, ab, aa := a.RGBA()
+	br, bg, bb, ba := b.RGBA()
+	return ar == br && ag == bg && ab == bb && aa == ba
+}
+
+func equalImage(a, b image.Image) bool {
+	ab, bb := a.Bounds(), b.Bounds()
+	if ab.Dx() != bb.Dx() || ab.Dy() != bb.Dy() {
+		return false
+	}
+
+	w := ab.Dx()
+	h := ab.Dy()
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			apix := a.At(x+ab.Min.X, y+ab.Min.Y)
+			bpix := b.At(x+bb.Min.X, y+bb.Min.Y)
+			if !equalColor(apix, bpix) {
+				return false
+			}
 		}
 	}
-	size := uint32(bounds.Dx() * bounds.Dy())
-	if size == 0 {
-		return color.Gray{}
+	return true
+}
+
+func hashImage(img image.Image) string {
+	var values string
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			values = fmt.Sprintf("%s%x%x%x%x", values, r, g, b, a)
+		}
 	}
-	return color.Gray{uint8(sum / size)}
+
+	sum := sha256.Sum256([]byte(values))
+	return fmt.Sprintf("%x", sum)
 }
 
 func main() {
@@ -57,20 +73,30 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	gimg := grayImage(img)
 
-	// Try to print input image to console in 5 levels of gray.
-	bounds := gimg.Bounds()
-	levels := []string{" ", "░", "▒", "▓", "█"}
+	weights := make(map[string]int)
+
+	bounds := img.Bounds()
 	for y := bounds.Min.Y; y < bounds.Max.Y; y += *sizePtr {
 		for x := bounds.Min.X; x < bounds.Max.X; x += *sizePtr {
 			rect := image.Rect(x, y, x+*sizePtr, y+*sizePtr)
-			sub := gimg.SubImage(rect)
-			gsub := grayImage(sub)
-			avg := averageColor(gsub)
-			ch := avg.Y / 51
-			fmt.Printf(levels[ch])
+			simg := img.(SubImager).SubImage(rect)
+			sum := hashImage(simg)
+			weights[sum] = weights[sum] + 1
 		}
-		fmt.Println()
 	}
+
+	fmt.Println(weights)
+
+	// Check if first and second tile image can equal.
+	r1 := image.Rect(0, 0, *sizePtr, *sizePtr)
+	i1 := img.(SubImager).SubImage(r1)
+	r2 := image.Rect(*sizePtr, 0, *sizePtr*2, *sizePtr)
+	i2 := img.(SubImager).SubImage(r2)
+
+	fmt.Println(i1 == i2)
+	fmt.Println(equalImage(i1, i2))
+
+	fmt.Println(hashImage(i1))
+	fmt.Println(hashImage(i2))
 }
