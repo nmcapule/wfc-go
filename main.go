@@ -12,6 +12,55 @@ import (
 	"os"
 )
 
+type Direction int
+
+const (
+	Up Direction = iota
+	Right
+	Down
+	Left
+)
+
+type wfcRule struct {
+	direction Direction
+	tileHash  string
+	weight    int
+}
+
+type wfcTile struct {
+	hash   string
+	weight int
+	chridx int
+	rules  []wfcRule
+}
+
+type tilemap struct {
+	tiles  []string
+	bounds image.Rectangle
+}
+
+func newTilemap(w, h int) tilemap {
+	return tilemap{
+		tiles:  make([]string, w*h),
+		bounds: image.Rect(0, 0, w, h),
+	}
+}
+
+func (tm tilemap) Set(x, y int, v string) error {
+	if x < tm.bounds.Min.X || x >= tm.bounds.Max.X || y < tm.bounds.Min.Y || y >= tm.bounds.Max.Y {
+		return fmt.Errorf("out of bounds (%d, %d)", x, y)
+	}
+	tm.tiles[y*tm.bounds.Dx()+x] = v
+	return nil
+}
+
+func (tm tilemap) At(x, y int) (string, error) {
+	if x < tm.bounds.Min.X || x >= tm.bounds.Max.X || y < tm.bounds.Min.Y || y >= tm.bounds.Max.Y {
+		return "", fmt.Errorf("out of bounds (%d, %d)", x, y)
+	}
+	return tm.tiles[y*tm.bounds.Dx()+x], nil
+}
+
 type SubImager interface {
 	SubImage(image.Rectangle) image.Image
 }
@@ -74,22 +123,37 @@ func main() {
 		log.Fatal(err)
 	}
 
-	chtable := make(map[string]int)
-	weights := make(map[string]int)
-
 	bounds := img.Bounds()
+	tiles := make(map[string]*wfcTile)
+	tilemap := newTilemap(bounds.Dx() / *sizePtr, bounds.Dy() / *sizePtr)
+
 	for y := bounds.Min.Y; y < bounds.Max.Y; y += *sizePtr {
 		for x := bounds.Min.X; x < bounds.Max.X; x += *sizePtr {
 			rect := image.Rect(x, y, x+*sizePtr, y+*sizePtr)
 			simg := img.(SubImager).SubImage(rect)
 			sum := hashImage(simg)
-			weights[sum] = weights[sum] + 1
-			ch, ok := chtable[sum]
+			tile, ok := tiles[sum]
 			if !ok {
-				ch = len(chtable)
-				chtable[sum] = ch
+				tile = &wfcTile{
+					hash:   sum,
+					chridx: len(tiles),
+				}
+				tiles[sum] = tile
 			}
-			fmt.Printf("%2d ", ch)
+			tile.weight = tile.weight + 1
+
+			tilemap.Set((x-bounds.Min.X)/(*sizePtr), (y-bounds.Min.Y)/(*sizePtr), sum)
+		}
+	}
+
+	for y := tilemap.bounds.Min.Y; y < tilemap.bounds.Max.Y; y++ {
+		for x := tilemap.bounds.Min.X; x < tilemap.bounds.Max.X; x++ {
+			sum, _ := tilemap.At(x, y)
+			tile, ok := tiles[sum]
+			if !ok {
+				log.Printf("unknown tile %s", sum)
+			}
+			fmt.Printf("%2d", tile.chridx)
 		}
 		fmt.Println()
 	}
