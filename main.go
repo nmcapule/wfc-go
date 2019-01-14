@@ -9,7 +9,9 @@ import (
 	"image/color"
 	"image/png"
 	"log"
+	"math/rand"
 	"os"
+	"time"
 
 	"github.com/kr/pretty"
 )
@@ -45,6 +47,137 @@ func (wt *wfcTile) CountRule(dir Direction, hash string) {
 	}
 	// If not found on the loop, add new rule.
 	wt.rules = append(wt.rules, wfcRule{dir, hash, 1})
+}
+
+type weightPair struct {
+	tileHash string
+	weight   int
+}
+
+// Container for a superposition tile.
+type wfcSspTile struct {
+	pairs []weightPair
+}
+
+func NewTileFromWfcTiles(tiles []*wfcTile) *wfcSspTile {
+	wst := &wfcSspTile{}
+	for _, v := range tiles {
+		wst.pairs = append(wst.pairs, weightPair{v.hash, v.weight})
+	}
+	return wst
+}
+
+func (wst *wfcSspTile) Entropy() float32 {
+	return float32(len(wst.pairs) - 1)
+}
+
+func (wst *wfcSspTile) ApplyRules(rules []wfcRule) bool {
+	// Build whitelist from previous pairs.
+	inc := make(map[string]bool)
+	for _, p := range wst.pairs {
+		inc[p.tileHash] = true
+	}
+	// Rebuild prop "pairs" from rules intersected with whitelist.
+	wst.pairs = nil
+	for _, rule := range rules {
+		if _, ok := inc[rule.tileHash]; ok {
+			wst.pairs = append(wst.pairs, weightPair{rule.tileHash, rule.weight})
+		}
+	}
+
+	return len(wst.pairs) > 0
+}
+
+// Collapse selects a random pair to collapse considering the pairs.
+func (wst *wfcSspTile) Collapse() (string, bool) {
+	var slots []*weightPair
+	for _, pair := range wst.pairs {
+		for i := 0; i < pair.weight; i++ {
+			slots = append(slots, &pair)
+		}
+	}
+	// Pick one.
+	i := rand.Intn(len(slots))
+	p := slots[i]
+	wst.pairs = []weightPair{*p}
+
+	return p.tileHash, len(wst.pairs) > 0
+}
+
+func (wst *wfcSspTile) IsCollapsed() (bool, bool) {
+	return len(wst.pairs) == 1, len(wst.pairs) > 0
+}
+
+type wfcSspTilemap struct {
+	tiles  []*wfcSspTile
+	rules  map[string]([]wfcRule)
+	bounds image.Rectangle
+}
+
+func NewTilemapFromWfcTiles(tiles []*wfcTile, w, h int) *wfcSspTilemap {
+	wtm := &wfcSspTilemap{
+		bounds: image.Rect(0, 0, w, h),
+	}
+	for i := 0; i < w*h; i++ {
+		wtm.tiles = append(wtm.tiles, NewTileFromWfcTiles(tiles))
+	}
+	wtm.rules = make(map[string]([]wfcRule))
+	for _, tile := range tiles {
+		wtm.rules[tile.hash] = tile.rules
+	}
+	return wtm
+}
+
+func (wtm *wfcSspTilemap) At(x, y int) (*wfcSspTile, error) {
+	i := y*wtm.bounds.Dx() + x
+	if i > len(wtm.tiles) {
+		return nil, fmt.Errorf("out of bounds (%d, %d)", x, y)
+	}
+	return wtm.tiles[i], nil
+}
+
+func (wtm *wfcSspTilemap) IndexToXY(i int) (int, int) {
+	return i % wtm.bounds.Dx(), i / wtm.bounds.Dx()
+}
+
+func (wtm *wfcSspTilemap) PickCollapseTile() (int, int, bool) {
+	bsi, bse := -1, float32(1000)
+	for i, tile := range wtm.tiles {
+		if tile.Entropy() > bse {
+			bsi, bse = i, tile.Entropy()
+		}
+	}
+	if bsi != -1 {
+		x, y := wtm.IndexToXY(bsi)
+		return x, y, true
+	}
+	return 0, 0, false
+}
+
+func (wtm *wfcSspTilemap) Collapse(x, y int) error {
+	t, err := wtm.At(x, y)
+	if err != nil {
+		return err
+	}
+	hash, ok := t.Collapse()
+	if !ok {
+		return fmt.Errorf("can't collapse tile at %d,%d", x, y)
+	}
+
+	// Check out the rules.
+	if dt, err := wtm.At(x, y-1); err == nil {
+		dt.ApplyRules(wtm.rules[hash])
+	}
+	if dt, err := wtm.At(x+1, y); err == nil {
+		dt.ApplyRules(wtm.rules[hash])
+	}
+	if dt, err := wtm.At(x, y+1); err == nil {
+		dt.ApplyRules(wtm.rules[hash])
+	}
+	if dt, err := wtm.At(x-1, y); err == nil {
+		dt.ApplyRules(wtm.rules[hash])
+	}
+	return nil
 }
 
 type tilemap struct {
@@ -106,21 +239,22 @@ func equalImage(a, b image.Image) bool {
 }
 
 func hashImage(img image.Image) string {
-	var values string
+	var values []byte
 	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
 		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
 			r, g, b, a := img.At(x, y).RGBA()
-			values = fmt.Sprintf("%s%x%x%x%x", values, r, g, b, a)
+			values = append(values, byte(r), byte(g), byte(b), byte(a))
 		}
 	}
 
-	sum := sha256.Sum256([]byte(values))
+	sum := sha256.Sum256(values)
 	return fmt.Sprintf("%x", sum)
 }
 
 func main() {
 	sizePtr := flag.Int("N", 32, "Size of each tile in input (NxN)")
 
+	rand.Seed(time.Now().UnixNano())
 	flag.Parse()
 
 	path := flag.Arg(0)
@@ -137,6 +271,7 @@ func main() {
 	}
 
 	bounds := img.Bounds()
+	tileImg := make(map[string]image.Image)
 	tiles := make(map[string]*wfcTile)
 	tilemap := newTilemap(bounds.Dx() / *sizePtr, bounds.Dy() / *sizePtr)
 
@@ -145,6 +280,7 @@ func main() {
 			rect := image.Rect(x, y, x+*sizePtr, y+*sizePtr)
 			simg := img.(SubImager).SubImage(rect)
 			sum := hashImage(simg)
+			tileImg[sum] = simg
 			tile, ok := tiles[sum]
 			if !ok {
 				tile = &wfcTile{
