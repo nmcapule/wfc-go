@@ -12,8 +12,7 @@ import (
 	"math/rand"
 	"os"
 	"time"
-
-	"github.com/kr/pretty"
+	// "github.com/kr/pretty"
 )
 
 type Direction int
@@ -129,8 +128,11 @@ func NewTilemapFromWfcTiles(tiles []*wfcTile, w, h int) *wfcSspTilemap {
 }
 
 func (wtm *wfcSspTilemap) At(x, y int) (*wfcSspTile, error) {
+	if x < wtm.bounds.Min.X || x >= wtm.bounds.Max.X || y < wtm.bounds.Min.Y || y >= wtm.bounds.Max.Y {
+		return nil, fmt.Errorf("out of bounds (%d, %d)", x, y)
+	}
 	i := y*wtm.bounds.Dx() + x
-	if i > len(wtm.tiles) {
+	if i < 0 || i >= len(wtm.tiles) {
 		return nil, fmt.Errorf("out of bounds (%d, %d)", x, y)
 	}
 	return wtm.tiles[i], nil
@@ -141,14 +143,24 @@ func (wtm *wfcSspTilemap) IndexToXY(i int) (int, int) {
 }
 
 func (wtm *wfcSspTilemap) PickCollapseTile() (int, int, bool) {
-	bsi, bse := -1, float32(1000)
+	var candidates []int
+	bse := float32(1000)
 	for i, tile := range wtm.tiles {
+		if c, _ := tile.IsCollapsed(); c {
+			continue
+		}
 		if tile.Entropy() < bse {
-			bsi, bse = i, tile.Entropy()
+			candidates = nil
+			bse = tile.Entropy()
+		}
+		if tile.Entropy() == bse {
+			candidates = append(candidates, i)
 		}
 	}
-	if bsi != -1 {
-		x, y := wtm.IndexToXY(bsi)
+	fmt.Println(candidates)
+	if candidates != nil {
+		bsi := rand.Intn(len(candidates))
+		x, y := wtm.IndexToXY(candidates[bsi])
 		return x, y, true
 	}
 	return 0, 0, false
@@ -178,6 +190,15 @@ func (wtm *wfcSspTilemap) Collapse(x, y int) error {
 		dt.ApplyRules(wtm.rules[hash])
 	}
 	return nil
+}
+
+func (wtm *wfcSspTilemap) PrintEntropyMap() {
+	for i, tile := range wtm.tiles {
+		fmt.Printf("%3.0f", tile.Entropy())
+		if (i+1)%wtm.bounds.Dx() == 0 {
+			fmt.Println()
+		}
+	}
 }
 
 type tilemap struct {
@@ -325,15 +346,15 @@ func main() {
 	for _, tile := range tiles {
 		tilesrr = append(tilesrr, tile)
 	}
-	wtm := NewTilemapFromWfcTiles(tilesrr, 32, 32)
-	x, y, ok := wtm.PickCollapseTile()
-	if !ok {
-		panic("cant pick collapse tile")
-	}
-	tile, err := wtm.At(x, y)
-	if err != nil {
-		panic(err)
-	}
+	wtm := NewTilemapFromWfcTiles(tilesrr, 8, 8)
 
-	pretty.Print(tile)
+	for i := 0; i < 32; i++ {
+		x, y, ok := wtm.PickCollapseTile()
+		if !ok {
+			panic("cant pick collapse tile")
+		}
+		fmt.Println(x, y)
+		wtm.Collapse(x, y)
+		wtm.PrintEntropyMap()
+	}
 }
