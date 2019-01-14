@@ -143,7 +143,7 @@ func (wtm *wfcSspTilemap) IndexToXY(i int) (int, int) {
 func (wtm *wfcSspTilemap) PickCollapseTile() (int, int, bool) {
 	bsi, bse := -1, float32(1000)
 	for i, tile := range wtm.tiles {
-		if tile.Entropy() > bse {
+		if tile.Entropy() < bse {
 			bsi, bse = i, tile.Entropy()
 		}
 	}
@@ -321,7 +321,19 @@ func main() {
 		fmt.Println()
 	}
 
+	var tilesrr []*wfcTile
 	for _, tile := range tiles {
-		pretty.Print(tile)
+		tilesrr = append(tilesrr, tile)
 	}
+	wtm := NewTilemapFromWfcTiles(tilesrr, 32, 32)
+	x, y, ok := wtm.PickCollapseTile()
+	if !ok {
+		panic("cant pick collapse tile")
+	}
+	tile, err := wtm.At(x, y)
+	if err != nil {
+		panic(err)
+	}
+
+	pretty.Print(tile)
 }
