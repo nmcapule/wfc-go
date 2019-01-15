@@ -55,7 +55,8 @@ type weightPair struct {
 
 // Container for a superposition tile.
 type wfcSspTile struct {
-	pairs []weightPair
+	pairs  []weightPair
+	marked bool
 }
 
 func NewTileFromWfcTiles(tiles []*wfcTile) *wfcSspTile {
@@ -164,7 +165,10 @@ func (wtm *wfcSspTilemap) PickCollapseTile() (int, int, bool) {
 	var candidates []int
 	bse := float32(1000)
 	for i, tile := range wtm.tiles {
-		if c, _ := tile.IsCollapsed(); c {
+		// if c, _ := tile.IsCollapsed(); c {
+		//  continue
+		// }
+		if tile.marked {
 			continue
 		}
 		if tile.Entropy() < bse {
@@ -189,6 +193,7 @@ func (wtm *wfcSspTilemap) Collapse(x, y int) error {
 	if err != nil {
 		return err
 	}
+	t.marked = true
 	hash, ok := t.Collapse()
 	if !ok {
 		return fmt.Errorf("can't collapse tile at %d,%d", x, y)
@@ -395,7 +400,7 @@ func main() {
 	}
 	wtm := NewTilemapFromWfcTiles(tilesrr, dstw, dsth)
 
-	for true {
+	for i := 0; i < 2000; i++ {
 		x, y, ok := wtm.PickCollapseTile()
 		if !ok {
 			break
