@@ -70,7 +70,11 @@ func (wst *wfcSspTile) Entropy() float32 {
 	return float32(len(wst.pairs) - 1)
 }
 
-func (wst *wfcSspTile) ApplyRules(rules []wfcRule) bool {
+func (wst *wfcSspTile) ApplyRules(direction Direction, rules []wfcRule) bool {
+	if c, ok := wst.IsCollapsed(); c || !ok {
+		return false
+	}
+
 	// Build whitelist from previous pairs.
 	inc := make(map[string]bool)
 	for _, p := range wst.pairs {
@@ -79,6 +83,9 @@ func (wst *wfcSspTile) ApplyRules(rules []wfcRule) bool {
 	// Rebuild prop "pairs" from rules intersected with whitelist.
 	wst.pairs = nil
 	for _, rule := range rules {
+		if rule.direction != direction {
+			continue
+		}
 		if _, ok := inc[rule.tileHash]; ok {
 			wst.pairs = append(wst.pairs, weightPair{rule.tileHash, rule.weight})
 		}
@@ -95,12 +102,23 @@ func (wst *wfcSspTile) Collapse() (string, bool) {
 			slots = append(slots, &pair)
 		}
 	}
+	if len(slots) <= 0 {
+		return "", false
+	}
 	// Pick one.
 	i := rand.Intn(len(slots))
 	p := slots[i]
 	wst.pairs = []weightPair{*p}
 
 	return p.tileHash, len(wst.pairs) > 0
+}
+
+func (wst *wfcSspTile) CollapsedHash() (string, bool) {
+	c, ok := wst.IsCollapsed()
+	if !c || !ok {
+		return "", false
+	}
+	return wst.pairs[0].tileHash, true
 }
 
 func (wst *wfcSspTile) IsCollapsed() (bool, bool) {
@@ -178,16 +196,16 @@ func (wtm *wfcSspTilemap) Collapse(x, y int) error {
 
 	// Check out the rules.
 	if dt, err := wtm.At(x, y-1); err == nil {
-		dt.ApplyRules(wtm.rules[hash])
+		dt.ApplyRules(Up, wtm.rules[hash])
 	}
 	if dt, err := wtm.At(x+1, y); err == nil {
-		dt.ApplyRules(wtm.rules[hash])
+		dt.ApplyRules(Right, wtm.rules[hash])
 	}
 	if dt, err := wtm.At(x, y+1); err == nil {
-		dt.ApplyRules(wtm.rules[hash])
+		dt.ApplyRules(Down, wtm.rules[hash])
 	}
 	if dt, err := wtm.At(x-1, y); err == nil {
-		dt.ApplyRules(wtm.rules[hash])
+		dt.ApplyRules(Left, wtm.rules[hash])
 	}
 	return nil
 }
@@ -195,6 +213,24 @@ func (wtm *wfcSspTilemap) Collapse(x, y int) error {
 func (wtm *wfcSspTilemap) PrintEntropyMap() {
 	for i, tile := range wtm.tiles {
 		fmt.Printf("%3.0f", tile.Entropy())
+		if (i+1)%wtm.bounds.Dx() == 0 {
+			fmt.Println()
+		}
+	}
+}
+
+func (wtm *wfcSspTilemap) PrintCollapsedMap() {
+	for i, tile := range wtm.tiles {
+		if c, _ := tile.IsCollapsed(); !c {
+			fmt.Printf(" ??")
+		} else {
+			h, ok := tile.CollapsedHash()
+			if !ok {
+				fmt.Printf(" xx")
+			} else {
+				fmt.Printf(" %s", h[:2])
+			}
+		}
 		if (i+1)%wtm.bounds.Dx() == 0 {
 			fmt.Println()
 		}
@@ -211,6 +247,15 @@ func newTilemap(w, h int) tilemap {
 		tiles:  make([]string, w*h),
 		bounds: image.Rect(0, 0, w, h),
 	}
+}
+
+func newTilemapFromWfcSspTilemap(wtm *wfcSspTilemap) tilemap {
+	tm := tilemap{bounds: wtm.bounds}
+	for _, wt := range wtm.tiles {
+		h, _ := wt.CollapsedHash()
+		tm.tiles = append(tm.tiles, h)
+	}
+	return tm
 }
 
 func (tm tilemap) Set(x, y int, v string) error {
@@ -342,19 +387,55 @@ func main() {
 		fmt.Println()
 	}
 
+	dstw, dsth := 16, 16
+
 	var tilesrr []*wfcTile
 	for _, tile := range tiles {
 		tilesrr = append(tilesrr, tile)
 	}
-	wtm := NewTilemapFromWfcTiles(tilesrr, 8, 8)
+	wtm := NewTilemapFromWfcTiles(tilesrr, dstw, dsth)
 
-	for i := 0; i < 32; i++ {
+	for true {
 		x, y, ok := wtm.PickCollapseTile()
 		if !ok {
-			panic("cant pick collapse tile")
+			break
 		}
 		fmt.Println(x, y)
 		wtm.Collapse(x, y)
 		wtm.PrintEntropyMap()
+		// wtm.PrintCollapsedMap()
+	}
+
+	oimg := image.NewRGBA(image.Rect(0, 0, dstw*(*sizePtr), dsth*(*sizePtr)))
+	otm := newTilemapFromWfcSspTilemap(wtm)
+	for r := otm.bounds.Min.Y; r < otm.bounds.Max.Y; r++ {
+		for c := otm.bounds.Min.X; c < otm.bounds.Max.X; c++ {
+			h, _ := otm.At(c, r)
+			im, ok := tileImg[h]
+			if !ok {
+				continue
+			}
+
+			dfx, dfy := c*(*sizePtr), r*(*sizePtr)
+			for x := 0; x < *sizePtr; x++ {
+				for y := 0; y < *sizePtr; y++ {
+					ofx, ofy := im.Bounds().Min.X, im.Bounds().Min.Y
+					sc := im.At(ofx+x, ofy+y)
+					oimg.Set(dfx+x, dfy+y, sc)
+				}
+			}
+		}
+	}
+
+	f, err = os.Create("image.png")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := png.Encode(f, oimg); err != nil {
+		f.Close()
+		log.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		log.Fatal(err)
 	}
 }
